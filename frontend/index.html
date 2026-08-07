@@ -1,0 +1,192 @@
+<!-- frontend/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>VisionGuide AI</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; background: #111; color: #eee; padding: 2rem; }
+    video { width: 480px; max-width: 90vw; border-radius: 8px; border: 2px solid #444; }
+    #status { margin-top: 1rem; font-size: 1.1rem; min-height: 2rem; }
+    button { padding: 0.6rem 1.2rem; font-size: 1rem; margin-top: 1rem; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>VisionGuide AI</h1>
+  <video id="video" autoplay playsinline></video>
+  <canvas id="canvas" style="display:none;"></canvas>
+  <div>
+    <button id="startBtn">Start</button>
+    <button id="stopBtn" disabled>Stop</button>
+    <button id="readTextBtn">Read Text</button>
+    <button id="describeSceneBtn">Describe Scene</button>
+    <button id="identifyCurrencyBtn">Identify Currency</button>
+  </div>
+  <div id="status">Press Start to begin.</div>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const statusEl = document.getElementById('status');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+
+    const API_URL = 'http://127.0.0.1:8000/api/detect';
+    let intervalId = null;
+
+    async function startCamera() {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      video.srcObject = stream;
+    }
+
+    let lastSpokenLabels = '';
+    let priorityLock = false; // true while OCR/Scene speech should not be interrupted
+
+    function speak(text, isPriority = false) {
+      if (priorityLock && !isPriority) return; // don't interrupt an in-progress priority speech
+      speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      if (isPriority) {
+        priorityLock = true;
+        utterance.onend = () => { priorityLock = false; };
+        utterance.onerror = () => { priorityLock = false; };
+      }
+    speechSynthesis.speak(utterance);
+  }
+
+    function captureFrameAsBlob() {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext('2d').drawImage(video, 0, 0);
+      return new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.8));
+    }
+
+    async function sendFrameForDetection() {
+      const blob = await captureFrameAsBlob();
+      const formData = new FormData();
+      formData.append('image', blob, 'frame.jpg');
+
+       try {
+          const res = await fetch(API_URL, { method: 'POST', body: formData });
+          if (!res.ok) throw new Error(`Server error: ${res.status}`);
+          const data = await res.json();
+
+        if (data.count === 0) {
+          statusEl.textContent = 'No objects detected.';
+          lastSpokenLabels = '';
+          return;
+        }
+
+        const labels = data.detections.map(d => d.label);
+        const summary = labels.join(', ');
+        statusEl.textContent = `Detected: ${summary}`;
+
+        // Only speak if the detected set actually changed since last time
+        if (summary !== lastSpokenLabels) {
+          speak(`I see ${summary}`);
+          lastSpokenLabels = summary;
+        }
+      } catch (err) {
+       statusEl.textContent = `Error: ${err.message}`;
+      }
+    }
+
+    startBtn.addEventListener('click', async () => {
+      await startCamera();
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      intervalId = setInterval(sendFrameForDetection, 3000); // every 3 seconds
+    });
+
+    stopBtn.addEventListener('click', () => {
+      clearInterval(intervalId);
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      statusEl.textContent = 'Stopped.';
+    });
+
+    // Add this inside the <script> block, alongside your existing functions
+
+    const readTextBtn = document.getElementById('readTextBtn');
+    const OCR_API_URL = 'http://127.0.0.1:8000/api/read-text';
+
+    readTextBtn.addEventListener('click', async () => {
+    if (!video.srcObject) {
+        statusEl.textContent = 'Start the camera first.';
+     return;
+    }
+
+     statusEl.textContent = 'Reading text...';
+     const blob = await captureFrameAsBlob();
+      const formData = new FormData();
+     formData.append('image', blob, 'snapshot.jpg');
+
+    try {
+       const res = await fetch(OCR_API_URL, { method: 'POST', body: formData });
+      if (!res.ok) throw new Error(`Server error: ${res.status}`);
+      const data = await res.json();
+
+       if (!data.combined_text.trim()) {
+         statusEl.textContent = 'No text detected.';
+        speak('No text detected.');
+      } else {
+        statusEl.textContent = `Read: ${data.combined_text}`;
+        speak(data.combined_text, true);
+      }
+     } catch (err) {
+       statusEl.textContent = `Error: ${err.message}`;
+     }
+    });
+    const describeSceneBtn = document.getElementById('describeSceneBtn');
+const SCENE_API_URL = 'http://127.0.0.1:8000/api/describe-scene';
+
+  describeSceneBtn.addEventListener('click', async () => {
+    if (!video.srcObject) {
+      statusEl.textContent = 'Start the camera first.';
+     return;
+   }
+
+    statusEl.textContent = 'Describing scene...';
+   const blob = await captureFrameAsBlob();
+   const formData = new FormData();
+   formData.append('image', blob, 'snapshot.jpg');
+
+   try {
+     const res = await fetch(SCENE_API_URL, { method: 'POST', body: formData });
+     if (!res.ok) throw new Error(`Server error: ${res.status}`);
+     const data = await res.json();
+
+     statusEl.textContent = data.description;
+     speak(data.description, true);
+    } catch (err) {
+     statusEl.textContent = `Error: ${err.message}`;
+   }
+  });
+  const identifyCurrencyBtn = document.getElementById('identifyCurrencyBtn');
+  const CURRENCY_API_URL = 'http://127.0.0.1:8000/api/identify-currency';
+
+    identifyCurrencyBtn.addEventListener('click', async () => {
+    if (!video.srcObject) {
+     statusEl.textContent = 'Start the camera first.';
+     return;
+    }
+
+    statusEl.textContent = 'Identifying currency...';
+    const blob = await captureFrameAsBlob();
+    const formData = new FormData();
+    formData.append('image', blob, 'snapshot.jpg');
+
+   try {
+     const res = await fetch(CURRENCY_API_URL, { method: 'POST', body: formData });
+     if (!res.ok) throw new Error(`Server error: ${res.status}`);
+     const data = await res.json();
+
+     statusEl.textContent = data.result;
+     speak(data.result, true);
+    } catch (err) {
+      statusEl.textContent = `Error: ${err.message}`;
+    }
+  });
+  </script>
+</body>
+</html>

@@ -31,7 +31,7 @@
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
 
-    const API_URL = 'http://127.0.0.1:8000/api/detect';
+    const API_URL = '"https://hacking-lifting-swell.ngrok-free.dev/api/detect';
     let intervalId = null;
 
     async function startCamera() {
@@ -108,7 +108,7 @@
     // Add this inside the <script> block, alongside your existing functions
 
     const readTextBtn = document.getElementById('readTextBtn');
-    const OCR_API_URL = 'http://127.0.0.1:8000/api/read-text';
+    const OCR_API_URL = '"https://hacking-lifting-swell.ngrok-free.dev/api/read-text';
 
     readTextBtn.addEventListener('click', async () => {
     if (!video.srcObject) {
@@ -138,7 +138,7 @@
      }
     });
     const describeSceneBtn = document.getElementById('describeSceneBtn');
-const SCENE_API_URL = 'http://127.0.0.1:8000/api/describe-scene';
+const SCENE_API_URL = '"https://hacking-lifting-swell.ngrok-free.dev/api/describe-scene';
 
   describeSceneBtn.addEventListener('click', async () => {
     if (!video.srcObject) {
@@ -163,7 +163,7 @@ const SCENE_API_URL = 'http://127.0.0.1:8000/api/describe-scene';
    }
   });
   const identifyCurrencyBtn = document.getElementById('identifyCurrencyBtn');
-  const CURRENCY_API_URL = 'http://127.0.0.1:8000/api/identify-currency';
+  const CURRENCY_API_URL = '"https://hacking-lifting-swell.ngrok-free.dev/api/identify-currency';
 
     identifyCurrencyBtn.addEventListener('click', async () => {
     if (!video.srcObject) {

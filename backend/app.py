@@ -5,7 +5,8 @@ from backend.api.routes import ocr
 from backend.core.config import get_settings
 from backend.core.logger import setup_logging, get_logger
 from backend.api.routes import currency
-from backend.api.routes import detector        
+from backend.api.routes import detector
+from backend.api.routes import voice        
 from backend.api.routes import scene
 
 setup_logging()
@@ -30,6 +31,7 @@ app.include_router(scene.router, prefix="/api", tags=["scene"])
 app.include_router(detector.router, prefix="/api", tags=["detector"])
 app.include_router(ocr.router, prefix="/api", tags=["ocr"])
 app.include_router(currency.router, prefix="/api", tags=["currency"])
+app.include_router(voice.router, prefix="/api", tags=["voice"])
 
 @app.on_event("startup")
 async def on_startup():

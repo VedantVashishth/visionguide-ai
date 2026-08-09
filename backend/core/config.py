@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     google_maps_api_key: str | None = None
     google_api_key: str | None = None
 
+    app_user_email: str = "test@example.com"
+    app_user_password: str = "changeme"
+
 
 @lru_cache
 def get_settings() -> Settings:

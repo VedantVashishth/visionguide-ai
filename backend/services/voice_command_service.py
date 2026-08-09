@@ -9,14 +9,23 @@ from backend.services.detector_service import detect_objects_in_image
 from backend.services.ocr_service import read_text_from_image
 from backend.services.scene_service import describe_scene_from_image
 from backend.services.currency_service import identify_currency_from_image
+from ai_engine.face.face_recognizer import FaceRecognizer
 
 logger = get_logger(__name__)
 
 settings = get_settings()
 genai.configure(api_key=settings.google_api_key)
-_intent_model = genai.GenerativeModel("gemini-3.6-flash")
+_intent_model = genai.GenerativeModel("gemini-3.5-flash-lite")
+_face_recognizer = FaceRecognizer()
 
-VALID_INTENTS = ["describe_scene", "read_text", "identify_currency", "detect_obstacles", "general_question"]
+VALID_INTENTS = [
+    "describe_scene",
+    "read_text",
+    "identify_currency",
+    "detect_obstacles",
+    "remember_person",
+    "general_question",
+]
 
 
 def _classify_intent(transcript: str) -> str:
@@ -30,6 +39,7 @@ def _classify_intent(transcript: str) -> str:
         "- read_text: user wants text/labels/signs read aloud\n"
         "- identify_currency: user wants a currency note identified\n"
         "- detect_obstacles: user wants to know about obstacles/objects in their path\n"
+        "- remember_person: user wants to save/remember the person currently in front of the camera\n"
         "- general_question: anything else, including specific questions about the scene\n\n"
         f"User said: \"{transcript}\"\n\n"
         "Respond with ONLY the category name, nothing else."
@@ -45,15 +55,22 @@ def _classify_intent(transcript: str) -> str:
     return intent
 
 
+def _decode_frame(image_bytes: bytes) -> np.ndarray:
+    np_array = np.frombuffer(image_bytes, dtype=np.uint8)
+    return cv2.imdecode(np_array, cv2.IMREAD_COLOR)
+
+
 def _answer_general_question(image_bytes: bytes, question: str) -> str:
     """For anything that doesn't match a specific feature — pass the question + image straight to Gemini."""
-    np_array = np.frombuffer(image_bytes, dtype=np.uint8)
-    frame = cv2.imdecode(np_array, cv2.IMREAD_COLOR)
+    frame = _decode_frame(image_bytes)
     success, buffer = cv2.imencode(".jpg", frame)
     image_data = buffer.tobytes()
 
+    known_name = _face_recognizer.recognize(frame)
+    context = f" The person in view is recognized as {known_name}." if known_name else ""
+
     prompt = (
-        f"You are helping a blind person. They asked: \"{question}\". "
+        f"You are helping a blind person. They asked: \"{question}\".{context} "
         "Answer concisely in one or two sentences based on what you see in the image."
     )
     response = _intent_model.generate_content(
@@ -93,7 +110,26 @@ def handle_voice_command(image_bytes: bytes, transcript: str) -> dict:
                 parts = [f"{d['label']} {d['proximity']}, {d['direction']}" for d in urgent]
                 spoken_text = ". ".join(parts) + "."
 
+    elif intent == "remember_person":
+        return {"intent": "remember_person", "spoken_text": "Sure, what is their name?", "awaiting_name": True}
+
     else:  # general_question
         spoken_text = _answer_general_question(image_bytes, transcript)
 
-    return {"intent": intent, "spoken_text": spoken_text}
+    return {"intent": intent, "spoken_text": spoken_text, "awaiting_name": False}
+
+
+def save_person_name(image_bytes: bytes, name: str) -> dict:
+    """
+    Called as the follow-up step after 'remember_person' — saves the
+    currently-visible face under the given spoken name.
+    """
+    frame = _decode_frame(image_bytes)
+    success = _face_recognizer.save_face(frame, name)
+
+    if success:
+        spoken_text = f"Got it, I'll remember {name}."
+    else:
+        spoken_text = "I couldn't find a clear face to save. Please try again."
+
+    return {"spoken_text": spoken_text}

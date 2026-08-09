@@ -17,7 +17,7 @@ class SceneNarrator:
     of the scene — e.g. "You are in a hallway. A door is ahead on your right."
     """
 
-    def __init__(self, model_name: str = "gemini-3.6-flash"):
+    def __init__(self, model_name: str = "gemini-3.5-flash-lite"):
         settings = get_settings()
         if not settings.google_api_key:
             raise RuntimeError(

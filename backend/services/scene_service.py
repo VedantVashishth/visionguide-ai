@@ -7,8 +7,14 @@ from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Loaded once at import time — avoids re-initializing the Gemini client per request.
-_narrator = SceneNarrator()
+# Lazy-loaded: only initialized when first used
+_narrator = None
+
+def _get_narrator():
+    global _narrator
+    if _narrator is None:
+        _narrator = SceneNarrator()
+    return _narrator
 
 
 def _decode_image(image_bytes: bytes) -> np.ndarray:
@@ -26,7 +32,7 @@ def describe_scene_from_image(image_bytes: bytes) -> dict:
     scene description ready for text-to-speech.
     """
     frame = _decode_image(image_bytes)
-    description = _narrator.describe(frame)
+    description = _get_narrator().describe(frame)
 
     logger.info(f"Scene description generated ({len(description)} chars)")
 

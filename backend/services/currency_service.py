@@ -7,8 +7,14 @@ from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Loaded once at import time — avoids re-initializing the Gemini client per request.
-_recognizer = CurrencyRecognizer()
+# Lazy-loaded: only initialized when first used
+_recognizer = None
+
+def _get_recognizer():
+    global _recognizer
+    if _recognizer is None:
+        _recognizer = CurrencyRecognizer()
+    return _recognizer
 
 
 def _decode_image(image_bytes: bytes) -> np.ndarray:
@@ -26,7 +32,7 @@ def identify_currency_from_image(image_bytes: bytes) -> dict:
     currency denomination as spoken-ready text.
     """
     frame = _decode_image(image_bytes)
-    result = _recognizer.identify(frame)
+    result = _get_recognizer().identify(frame)
 
     logger.info(f"Currency identification result: {result}")
 

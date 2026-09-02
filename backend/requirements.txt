@@ -8,4 +8,4 @@ pydantic-settings
 ultralytics
 easyocr
 google-generativeai
-opencv-contrib-python
+opencv-contrib-python  

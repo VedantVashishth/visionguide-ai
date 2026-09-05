@@ -31,9 +31,16 @@ def identify_currency_from_image(image_bytes: bytes) -> dict:
     Takes a single snapshot's image bytes, returns the identified
     currency denomination as spoken-ready text.
     """
+    from backend.utils.frame_gate import get_cached_result_if_unchanged, store_result
+
+    cached = get_cached_result_if_unchanged(image_bytes, "currency")
+    if cached is not None:
+        return {"result": cached, "cached": True}
+
     frame = _decode_image(image_bytes)
     result = _get_recognizer().identify(frame)
+    store_result(image_bytes, "currency", result)
 
     logger.info(f"Currency identification result: {result}")
 
-    return {"result": result}
+    return {"result": result, "cached": False}

@@ -9,14 +9,14 @@ from backend.services.detector_service import detect_objects_in_image
 from backend.services.ocr_service import read_text_from_image
 from backend.services.scene_service import describe_scene_from_image
 from backend.services.currency_service import identify_currency_from_image
-from ai_engine.face.face_recognizer import FaceRecognizer
+from backend.services.face_service import get_face_recognizer
 
 logger = get_logger(__name__)
 
 settings = get_settings()
 genai.configure(api_key=settings.google_api_key)
 _intent_model = genai.GenerativeModel(settings.gemini_model_name)
-_face_recognizer = FaceRecognizer()
+_face_recognizer = get_face_recognizer()
 
 VALID_INTENTS = [
     "describe_scene",
@@ -60,13 +60,15 @@ def _decode_frame(image_bytes: bytes) -> np.ndarray:
     return cv2.imdecode(np_array, cv2.IMREAD_COLOR)
 
 
-def _answer_general_question(image_bytes: bytes, question: str) -> str:
+def _answer_general_question(image_bytes: bytes, question: str, known_name: str | None = None) -> str:
     """For anything that doesn't match a specific feature — pass the question + image straight to Gemini."""
     frame = _decode_frame(image_bytes)
     success, buffer = cv2.imencode(".jpg", frame)
     image_data = buffer.tobytes()
 
-    known_name = _face_recognizer.recognize(frame)
+    if known_name is None:
+        known_name = _face_recognizer.recognize(frame)
+
     context = f" The person in view is recognized as {known_name}." if known_name else ""
 
     prompt = (
@@ -85,6 +87,7 @@ def handle_voice_command(image_bytes: bytes, transcript: str) -> dict:
     routes to the correct feature, returns a spoken-ready response.
     """
     intent = _classify_intent(transcript)
+    recognized_face = None
 
     if intent == "describe_scene":
         result = describe_scene_from_image(image_bytes)
@@ -111,25 +114,18 @@ def handle_voice_command(image_bytes: bytes, transcript: str) -> dict:
                 spoken_text = ". ".join(parts) + "."
 
     elif intent == "remember_person":
-        return {"intent": "remember_person", "spoken_text": "Sure, what is their name?", "awaiting_name": True}
+        return {
+            "intent": "remember_person",
+            "spoken_text": "Sure, what is their name? Hold still when you say it.",
+            "awaiting_name": True,
+        }
 
     else:  # general_question
-        spoken_text = _answer_general_question(image_bytes, transcript)
+        frame = _decode_frame(image_bytes)
+        recognized_face = _face_recognizer.recognize(frame)
+        spoken_text = _answer_general_question(image_bytes, transcript, known_name=recognized_face)
 
-    return {"intent": intent, "spoken_text": spoken_text, "awaiting_name": False}
-
-
-def save_person_name(image_bytes: bytes, name: str) -> dict:
-    """
-    Called as the follow-up step after 'remember_person' — saves the
-    currently-visible face under the given spoken name.
-    """
-    frame = _decode_frame(image_bytes)
-    success = _face_recognizer.save_face(frame, name)
-
-    if success:
-        spoken_text = f"Got it, I'll remember {name}."
-    else:
-        spoken_text = "I couldn't find a clear face to save. Please try again."
-
-    return {"spoken_text": spoken_text}
+    response = {"intent": intent, "spoken_text": spoken_text, "awaiting_name": False}
+    if recognized_face:
+        response["recognized_face"] = recognized_face
+    return response

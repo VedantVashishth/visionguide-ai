@@ -1,7 +1,10 @@
 # backend/api/routes/voice.py
+from typing import List
+
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 
-from backend.services.voice_command_service import handle_voice_command, save_person_name
+from backend.services.voice_command_service import handle_voice_command
+from backend.services.face_service import save_person_faces, list_known_faces, forget_face
 from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -35,22 +38,55 @@ async def voice_command(image: UploadFile = File(...), transcript: str = Form(..
 
 
 @router.post("/save-face")
-async def save_face(image: UploadFile = File(...), name: str = Form(...)):
+async def save_face(
+    images: List[UploadFile] = File(...),
+    name: str = Form(...),
+):
     """
     Follow-up step after 'remember_person' intent — saves the currently
     visible face under the given name, using OpenCV's local LBPH recognizer.
-    No image or face data is ever sent to any cloud service.
+    Accepts multiple snapshots for better accuracy. No cloud calls.
     """
-    if not image.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="Uploaded file must be an image.")
+    if not images:
+        raise HTTPException(status_code=400, detail="At least one image is required.")
     if not name.strip():
         raise HTTPException(status_code=400, detail="Name cannot be empty.")
 
+    for upload in images:
+        if not upload.content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="Uploaded files must be images.")
+
     try:
-        image_bytes = await image.read()
-        result = save_person_name(image_bytes, name)
+        image_bytes_list = [await upload.read() for upload in images]
+        result = save_person_faces(image_bytes_list, name)
+    except ValueError as e:
+        logger.warning(f"Bad image upload for save-face: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Save face failed: {e}")
         raise HTTPException(status_code=500, detail="Saving face failed.")
 
     return result
+
+
+@router.get("/known-faces")
+async def known_faces():
+    """Return names currently stored in the local face database."""
+    try:
+        return list_known_faces()
+    except Exception as e:
+        logger.error(f"List known faces failed: {e}")
+        raise HTTPException(status_code=500, detail="Could not list known faces.")
+
+
+@router.delete("/known-faces/{name}")
+async def delete_known_face(name: str):
+    """Remove a remembered person from the local face database."""
+    if not name.strip():
+        raise HTTPException(status_code=400, detail="Name cannot be empty.")
+
+    try:
+        return forget_face(name)
+    except Exception as e:
+        logger.error(f"Delete known face failed: {e}")
+        raise HTTPException(status_code=500, detail="Could not delete known face.")

@@ -562,6 +562,31 @@
       text-align: center;
     }
 
+    .status-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+      width: 100%;
+    }
+
+    .recognized-chip {
+      align-self: center;
+      font-size: 0.72rem;
+      font-family: var(--font-mono);
+      font-weight: 600;
+      padding: 0.35rem 0.75rem;
+      border-radius: 20px;
+      background: var(--cyan-dim);
+      border: 1px solid rgba(45, 212, 238, 0.35);
+      color: var(--cyan);
+      letter-spacing: 0.02em;
+    }
+
+    .recognized-chip:empty,
+    .recognized-chip[hidden] {
+      display: none;
+    }
+
     /* ---------- Debug/Manual Controls Panel ---------- */
     details {
       text-align: left;
@@ -617,6 +642,109 @@
     }
 
     .manual-buttons button:active { transform: translateY(0); }
+
+    .auto-detect-row {
+      padding: 0 1.35rem 1rem;
+      border-top: 1px solid var(--border-soft);
+      margin-top: 0.25rem;
+    }
+
+    .auto-detect-toggle {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      cursor: pointer;
+      font-size: 0.78rem;
+      font-family: var(--font-mono);
+      color: var(--text-dim);
+      user-select: none;
+    }
+
+    .auto-detect-toggle input {
+      position: absolute;
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .toggle-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--text-faint);
+      box-shadow: none;
+      transition: all 0.25s ease;
+      flex-shrink: 0;
+    }
+
+    .auto-detect-toggle input:checked + .toggle-dot {
+      background: var(--cyan);
+      box-shadow: 0 0 8px var(--cyan-glow), 0 0 2px var(--cyan);
+      animation: dotPulse 1.8s ease-in-out infinite;
+    }
+
+    .auto-detect-toggle input:checked ~ .toggle-label {
+      color: var(--cyan);
+    }
+
+    .known-faces-panel {
+      margin-top: 0.85rem;
+      padding: 0 1.35rem 1.35rem;
+      border-top: 1px solid var(--border-soft);
+    }
+
+    .known-faces-panel h4 {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin: 1rem 0 0.65rem;
+    }
+
+    .known-faces-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+    }
+
+    .known-faces-list li {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      padding: 0.55rem 0.75rem;
+      border-radius: 10px;
+      border: 1px solid var(--border-soft);
+      background: rgba(2, 4, 9, 0.35);
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+
+    .known-faces-list .face-delete {
+      background: transparent;
+      border: 1px solid rgba(244, 104, 92, 0.25);
+      color: var(--danger);
+      border-radius: 8px;
+      width: 1.6rem;
+      height: 1.6rem;
+      cursor: pointer;
+      font-size: 0.75rem;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+
+    .known-faces-list .face-delete:hover {
+      background: rgba(244, 104, 92, 0.12);
+    }
+
+    .known-faces-empty {
+      font-size: 0.78rem;
+      color: var(--text-faint);
+      font-style: italic;
+    }
 
     /* ---------- AI Log tab ---------- */
     .log-panel {
@@ -941,7 +1069,10 @@
             <p id="pushToTalkLabel">Hold mic &amp; speak</p>
           </div>
 
-          <div id="status">Press "Start Camera" to begin.</div>
+          <div class="status-wrap">
+            <div id="recognizedChip" class="recognized-chip" hidden></div>
+            <div id="status">Press "Start Camera" to begin.</div>
+          </div>
           <div class="badge">🔒 On-Device Face Database — Safe &amp; Private</div>
         </div>
 
@@ -962,6 +1093,18 @@
               <button id="readTextBtn">Read Text</button>
               <button id="describeSceneBtn">Describe Scene</button>
               <button id="identifyCurrencyBtn">Identify Currency</button>
+            </div>
+            <div class="auto-detect-row">
+              <label class="auto-detect-toggle">
+                <input type="checkbox" id="autoDetectToggle" />
+                <span class="toggle-dot"></span>
+                <span class="toggle-label">Auto-detect obstacles (every 2.5s)</span>
+              </label>
+            </div>
+            <div class="known-faces-panel">
+              <h4>Known Faces</h4>
+              <ul id="knownFacesList" class="known-faces-list"></ul>
+              <p id="knownFacesEmpty" class="known-faces-empty">No faces remembered yet.</p>
             </div>
           </details>
         </div>
@@ -1013,6 +1156,7 @@
     const videoWrap = document.querySelector('.video-wrap');
     const canvas = document.getElementById('canvas');
     const statusEl = document.getElementById('status');
+    const recognizedChip = document.getElementById('recognizedChip');
     const startBtn = document.getElementById('startBtn');
     const orbWrap = document.getElementById('orbWrap');
     const pushToTalkZone = document.getElementById('pushToTalkZone');
@@ -1190,14 +1334,21 @@
     }
 
     async function sendVoiceCommand(transcript) {
-      const blob = await captureFrameAsBlob();
-      const formData = new FormData();
-      formData.append('image', blob, 'snapshot.jpg');
-      setProcessing(true);
-
       if (awaitingPersonName) {
+        statusEl.textContent = `Saving as "${transcript}"... please hold still.`;
+        speak('Please hold still while I capture a few photos.', true);
+        
+        const formData = new FormData();
         formData.append('name', transcript);
-        statusEl.textContent = `Saving as "${transcript}"...`;
+        
+        // Capture 3 frames, 500ms apart
+        for (let i = 0; i < 3; i++) {
+            const blob = await captureFrameAsBlob();
+            formData.append('images', blob, `snapshot_${i}.jpg`);
+            if (i < 2) await new Promise(r => setTimeout(r, 500));
+        }
+
+        setProcessing(true);
         try {
           const res = await fetch(SAVE_FACE_API_URL, {
             method: 'POST',
@@ -1209,6 +1360,8 @@
           statusEl.textContent = data.spoken_text;
           speak(data.spoken_text, true);
           addLogEntry({ type: 'face', title: 'Person remembered', text: `Saved face as "${transcript}".` });
+          // Update the known faces list
+          fetchKnownFaces();
         } catch (err) {
           statusEl.textContent = `Error: ${err.message}`;
           speak('Sorry, something went wrong saving that.', true);
@@ -1218,6 +1371,11 @@
         }
         return;
       }
+
+      const blob = await captureFrameAsBlob();
+      const formData = new FormData();
+      formData.append('image', blob, 'snapshot.jpg');
+      setProcessing(true);
 
       statusEl.textContent = `Heard: "${transcript}" — processing...`;
       formData.append('transcript', transcript);
@@ -1238,6 +1396,16 @@
           title: `Voice · ${(data.intent || 'reply').replace(/_/g, ' ')}`,
           text: `"${transcript}" → ${data.spoken_text}`
         });
+
+        if (data.recognized_face) {
+          const recognizedChip = document.getElementById('recognizedChip');
+          if (recognizedChip) {
+            recognizedChip.textContent = `Recognized: ${data.recognized_face}`;
+            recognizedChip.hidden = false;
+            // hide it after 5 seconds
+            setTimeout(() => { recognizedChip.hidden = true; }, 5000);
+          }
+        }
 
         if (data.awaiting_name) {
           awaitingPersonName = true;
@@ -1571,6 +1739,125 @@
       }).catch((err) => {
         statusEl.textContent = 'Failed to send alert: ' + err.text;
       });
+    }
+    // ---------- Known Faces UI ----------
+    const knownFacesList = document.getElementById('knownFacesList');
+    const knownFacesEmpty = document.getElementById('knownFacesEmpty');
+    
+    async function fetchKnownFaces() {
+      try {
+        const res = await fetch(`${BASE_URL}/api/known-faces`, { headers: getAuthHeaders() });
+        const data = await res.json();
+        
+        knownFacesList.innerHTML = '';
+        if (!data.names || data.names.length === 0) {
+          knownFacesList.style.display = 'none';
+          knownFacesEmpty.style.display = 'block';
+        } else {
+          knownFacesList.style.display = 'flex';
+          knownFacesEmpty.style.display = 'none';
+          
+          data.names.forEach(name => {
+            const li = document.createElement('li');
+            li.innerHTML = `
+              <span>${name}</span>
+              <button class="face-delete" aria-label="Forget ${name}">✕</button>
+            `;
+            li.querySelector('button').addEventListener('click', () => deleteKnownFace(name));
+            knownFacesList.appendChild(li);
+          });
+        }
+      } catch (e) {
+        console.error('Error fetching known faces', e);
+      }
+    }
+
+    async function deleteKnownFace(name) {
+      if (!confirm(`Are you sure you want to forget ${name}?`)) return;
+      try {
+        await fetch(`${BASE_URL}/api/known-faces/${encodeURIComponent(name)}`, { 
+          method: 'DELETE', 
+          headers: getAuthHeaders() 
+        });
+        fetchKnownFaces();
+      } catch (e) {
+        console.error('Error deleting known face', e);
+      }
+    }
+
+    // Call it once on start
+    fetchKnownFaces();
+
+    // ---------- Auto-Detect Obstacles ----------
+    const autoDetectToggle = document.getElementById('autoDetectToggle');
+    let autoDetectTimer = null;
+
+    // Audio cue
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function playProximityBeep() {
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 800;
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      gain.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 0.3);
+      osc.stop(audioCtx.currentTime + 0.3);
+    }
+
+    autoDetectToggle.addEventListener('change', (e) => {
+      if (e.target.checked) {
+        if (!cameraStarted) {
+           e.target.checked = false;
+           statusEl.textContent = 'Start the camera first.';
+           return;
+        }
+        autoDetectTimer = setInterval(runAutoDetect, 2500);
+      } else {
+        clearInterval(autoDetectTimer);
+        autoDetectTimer = null;
+      }
+    });
+
+    async function runAutoDetect() {
+      if (priorityLock) return; // skip if speaking
+      const blob = await captureFrameAsBlob();
+      const formData = new FormData();
+      formData.append('image', blob, 'snapshot.jpg');
+      
+      try {
+        const res = await fetch(DETECT_API_URL, {
+          method: 'POST',
+          body: formData,
+          headers: getAuthHeaders()
+        });
+        const data = await res.json();
+        
+        if (data.count > 0) {
+          const sorted = [...data.detections].sort((a, b) => {
+            const order = { close: 0, medium: 1, far: 2 };
+            return order[a.proximity] - order[b.proximity];
+          });
+          
+          const urgent = sorted.filter(d => d.proximity !== 'far');
+          if (urgent.length > 0) {
+            // Trigger audio beep if there is a 'close' object
+            if (urgent.some(d => d.proximity === 'close')) {
+                playProximityBeep();
+            }
+            
+            const summary = urgent.map(d => `${d.label} ${d.proximity}, ${d.direction}`).join('. ');
+            if (summary !== lastSpokenLabels) {
+              speak(summary);
+              lastSpokenLabels = summary;
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Auto-detect error', e);
+      }
     }
   </script>
 </body>

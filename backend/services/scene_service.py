@@ -31,9 +31,16 @@ def describe_scene_from_image(image_bytes: bytes) -> dict:
     Takes a single snapshot's image bytes, returns a natural-language
     scene description ready for text-to-speech.
     """
+    from backend.utils.frame_gate import get_cached_result_if_unchanged, store_result
+
+    cached = get_cached_result_if_unchanged(image_bytes, "scene")
+    if cached is not None:
+        return {"description": cached, "cached": True}
+
     frame = _decode_image(image_bytes)
     description = _get_narrator().describe(frame)
+    store_result(image_bytes, "scene", description)
 
     logger.info(f"Scene description generated ({len(description)} chars)")
 
-    return {"description": description}
+    return {"description": description, "cached": False}

@@ -1,0 +1,32 @@
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+visionguide_env/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Models, Weights & Privacy
+models/detector/*.pt
+models/depth/*.pt
+models/faces/samples/
+models/faces/*.yml
+models/faces/*.json
+yolo11n.pt
+yolo11s.pt
+
+# Ignore temporary snapshot files
+*.jpg
+*.jpeg
+*.png

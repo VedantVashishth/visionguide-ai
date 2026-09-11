@@ -9,3 +9,4 @@ easyocr
 google-generativeai
 opencv-contrib-python  
 requests
+ngrok

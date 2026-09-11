@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     enable_currency_recognition: bool = True
     enable_traffic_detection: bool = True
     enable_face_recognition: bool = False  # off by default: privacy-sensitive
+    enable_depth_estimation: bool = False  # enable on a GPU-equipped machine
+    depth_model_name: str = "MiDaS_small"
+    depth_device: str = "auto"  # auto | cpu | cuda
 
     # Third-party keys (populate later via .env, never hardcode)
     openai_api_key: str | None = None

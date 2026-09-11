@@ -1,6 +1,9 @@
 # backend/app.py
+from pathlib import Path
+
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from backend.api.routes import ocr
 from backend.core.config import get_settings
 from backend.core.logger import setup_logging, get_logger
@@ -37,7 +40,8 @@ app.include_router(currency.router, prefix="/api", tags=["currency"], dependenci
 app.include_router(voice.router, prefix="/api", tags=["voice"], dependencies=[Depends(get_current_user)])
 app.include_router(location.router, prefix="/api", tags=["location"], dependencies=[Depends(get_current_user)])
 app.include_router(auth.router, prefix="/api", tags=["auth"])
-
+from backend.api.routes import webrtc
+app.include_router(webrtc.router, tags=["webrtc"])
 @app.on_event("startup")
 async def on_startup():
     logger.info(f"Starting {settings.app_name} in '{settings.environment}' mode")
@@ -46,3 +50,9 @@ async def on_startup():
 async def health_check():
     logger.info("Health check hit")
     return {"status": "ok", "service": settings.app_name}
+
+
+# Serving the static app here makes one HTTPS tunnel sufficient for phone camera
+# access, the volunteer page, API calls, and WebSocket signaling.
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

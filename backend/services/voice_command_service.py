@@ -24,6 +24,7 @@ VALID_INTENTS = [
     "identify_currency",
     "detect_obstacles",
     "remember_person",
+    "call_volunteer",
     "general_question",
 ]
 
@@ -40,6 +41,7 @@ def _classify_intent(transcript: str) -> str:
         "- identify_currency: user wants a currency note identified\n"
         "- detect_obstacles: user wants to know about obstacles/objects in their path\n"
         "- remember_person: user wants to save/remember the person currently in front of the camera\n"
+        "- call_volunteer: user wants to call, video call, or ask a volunteer/friend for help\n"
         "- general_question: anything else, including specific questions about the scene\n\n"
         f"User said: \"{transcript}\"\n\n"
         "Respond with ONLY the category name, nothing else."
@@ -118,6 +120,14 @@ def handle_voice_command(image_bytes: bytes, transcript: str) -> dict:
             "intent": "remember_person",
             "spoken_text": "Sure, what is their name? Hold still when you say it.",
             "awaiting_name": True,
+        }
+
+    elif intent == "call_volunteer":
+        return {
+            "intent": "call_volunteer",
+            "spoken_text": "Starting a volunteer call. Share the volunteer link with your helper.",
+            "awaiting_name": False,
+            "start_volunteer_call": True,
         }
 
     else:  # general_question

@@ -47,6 +47,8 @@ GOOGLE_API_KEY=your_gemini_api_key_here
 GEMINI_MODEL_NAME=gemini-3.6-flash
 APP_USER_EMAIL=test@example.com
 APP_USER_PASSWORD=changeme
+# Keep depth disabled on CPU machines. Set true on the GPU laptop after installing PyTorch.
+ENABLE_DEPTH_ESTIMATION=false
 ```
 
 ### 3. Running the App
@@ -55,6 +57,26 @@ VisionGuide includes a helper PowerShell script to start both the FastAPI backen
 .\start.ps1
 ```
 The backend will launch on `http://127.0.0.1:8000` and the frontend will automatically open at `http://127.0.0.1:5500`.
+
+### Phone camera and volunteer calls
+
+For phone use, start the backend and expose port 8000 through an HTTPS tunnel. The backend also serves the frontend, so it is important to use the tunnel URL itself (not the separate port-5500 server):
+
+```powershell
+ngrok http 8000
+```
+
+Open the `https://…ngrok-free.app` address on the phone and accept the camera prompt. VisionGuide requests the rear camera by default; use **Switch Camera** if needed. A spoken “call a volunteer” command (or its debug button) creates a one-time room and displays a link for the volunteer. Both parties should use the same HTTPS tunnel URL. The relay only signals the browsers; the video is peer-to-peer. The included STUN server is sufficient for many networks, but reliable calls across restrictive networks need a TURN server.
+
+### Emergency email setup
+
+1. In EmailJS, create an email service and an email template that uses `{{message}}`, `{{location}}`, and `{{to_email}}`.
+2. Copy `frontend/config.example.js` to `frontend/config.js` and insert the EmailJS public key, service ID, template ID, and trusted contact address. `config.js` is ignored by Git.
+3. Reload the app and use **Test Emergency Alert** in Manual mode. It sends a clearly labelled manual-test alert without waiting for a fall event.
+
+### Optional GPU depth estimation
+
+Depth estimation is deliberately dormant on CPU machines. On the GPU laptop, install an appropriate PyTorch build, set `ENABLE_DEPTH_ESTIMATION=true`, and optionally set `DEPTH_DEVICE=cuda`. The first depth request lazily downloads/loads the MiDaS model; normal startup and all current CPU features remain unaffected while the flag is false.
 
 ## 🔒 Privacy & Safety
 VisionGuide is designed with privacy in mind. Face recognition embeddings and models are stored strictly on disk (`models/faces/`). The app does not continuously stream video to the cloud; it only sends discrete, user-triggered snapshots to Gemini when explicit features (like Scene Narration) are requested.

@@ -7,6 +7,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>VisionGuide AI</title>
   <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+  <script src="config.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
@@ -1083,6 +1084,7 @@
           </div>
           <canvas id="canvas" style="display:none;"></canvas>
           <button id="startBtn">Start Camera</button>
+          <button id="switchCameraBtn" disabled>Switch Camera</button>
         </div>
 
         <div class="right-panel">
@@ -1093,6 +1095,8 @@
               <button id="readTextBtn">Read Text</button>
               <button id="describeSceneBtn">Describe Scene</button>
               <button id="identifyCurrencyBtn">Identify Currency</button>
+              <button id="callVolunteerBtn">Call a Volunteer</button>
+              <button id="testEmergencyBtn">Test Emergency Alert</button>
             </div>
             <div class="auto-detect-row">
               <label class="auto-detect-toggle">
@@ -1158,6 +1162,7 @@
     const statusEl = document.getElementById('status');
     const recognizedChip = document.getElementById('recognizedChip');
     const startBtn = document.getElementById('startBtn');
+    const switchCameraBtn = document.getElementById('switchCameraBtn');
     const orbWrap = document.getElementById('orbWrap');
     const pushToTalkZone = document.getElementById('pushToTalkZone');
     const pushToTalkLabel = document.getElementById('pushToTalkLabel');
@@ -1167,6 +1172,8 @@
     const readTextBtn = document.getElementById('readTextBtn');
     const describeSceneBtn = document.getElementById('describeSceneBtn');
     const identifyCurrencyBtn = document.getElementById('identifyCurrencyBtn');
+    const callVolunteerBtn = document.getElementById('callVolunteerBtn');
+    const testEmergencyBtn = document.getElementById('testEmergencyBtn');
 
     const dotCamera = document.getElementById('dotCamera');
     const dotMic = document.getElementById('dotMic');
@@ -1221,7 +1228,11 @@
       logEmpty.style.display = 'block';
     });
 
-    const BASE_URL = 'http://127.0.0.1:8000';
+    // The backend serves this page in production/tunnel mode. Port 5500 is only
+    // the optional local static server started by start.ps1.
+    const BASE_URL = location.port === '5500'
+      ? `${location.protocol}//${location.hostname}:8000`
+      : location.origin;
     const DETECT_API_URL = `${BASE_URL}/api/detect`;
     const OCR_API_URL = `${BASE_URL}/api/read-text`;
     const SCENE_API_URL = `${BASE_URL}/api/describe-scene`;
@@ -1237,6 +1248,11 @@
     let recognition = null;
     let isListening = false;
     let awaitingPersonName = false;
+    let cameraStream = null;
+    let usingRearCamera = true;
+    let volunteerSocket = null;
+    let volunteerPeer = null;
+    let volunteerPendingCandidates = [];
 
     // Last resolved location — reused for emergency alerts once known
     let lastKnownLocation = null; // { address, lat, lng }
@@ -1285,11 +1301,17 @@
     // ---------- Camera ----------
     async function startCamera() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        video.srcObject = stream;
+        cameraStream?.getTracks().forEach(track => track.stop());
+        cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: usingRearCamera ? 'environment' : 'user' } }, audio: false });
+        video.srcObject = cameraStream;
+        // Keep an active volunteer call alive when changing the phone camera.
+        const replacementTrack = cameraStream.getVideoTracks()[0];
+        const videoSender = volunteerPeer?.getSenders().find(sender => sender.track?.kind === 'video');
+        if (videoSender && replacementTrack) await videoSender.replaceTrack(replacementTrack);
         cameraStarted = true;
         startBtn.disabled = true;
         startBtn.textContent = 'Camera Running';
+        switchCameraBtn.disabled = false;
         dotCamera.classList.add('live');
         pushToTalkZone.classList.remove('disabled');
         orbWrap.classList.add('active');
@@ -1306,11 +1328,92 @@
       startCamera();
     });
 
+    switchCameraBtn.addEventListener('click', async () => {
+      usingRearCamera = !usingRearCamera;
+      await startCamera();
+      const direction = usingRearCamera ? 'rear' : 'front';
+      statusEl.textContent = `Using the ${direction} camera.`;
+      speak(`Switched to the ${direction} camera.`, true);
+    });
+
     function captureFrameAsBlob() {
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       canvas.getContext('2d').drawImage(video, 0, 0);
       return new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.8));
+    }
+
+    // ---------- Volunteer video call ----------
+    const RTC_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+    function makeCallRoom() {
+      return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+    function volunteerUrl(room) {
+      // With a tunnel, open the app from FastAPI (port 8000) so this is a shareable HTTPS URL.
+      return `${BASE_URL}/volunteer.html?room=${encodeURIComponent(room)}`;
+    }
+    async function startVolunteerCall() {
+      if (!cameraStream) { statusEl.textContent = 'Start the camera before calling a volunteer.'; return; }
+      volunteerPeer?.close(); volunteerSocket?.close();
+      volunteerPendingCandidates = [];
+      const room = makeCallRoom();
+      const wsProtocol = BASE_URL.startsWith('https:') ? 'wss:' : 'ws:';
+      const wsHost = BASE_URL.replace(/^https?:/, '');
+      volunteerSocket = new WebSocket(`${wsProtocol}${wsHost}/ws/signaling/${encodeURIComponent(room)}/sender`);
+      volunteerSocket.onopen = async () => {
+        volunteerPeer = new RTCPeerConnection(RTC_CONFIG);
+        cameraStream.getTracks().forEach(track => volunteerPeer.addTrack(track, cameraStream));
+        volunteerPeer.onicecandidate = ({ candidate }) => candidate && volunteerSocket.send(JSON.stringify({ type: 'candidate', candidate }));
+        volunteerPeer.onconnectionstatechange = () => {
+          if (volunteerPeer.connectionState === 'connected') statusEl.textContent = 'Volunteer connected to your camera.';
+        };
+        const offer = await volunteerPeer.createOffer();
+        await volunteerPeer.setLocalDescription(offer);
+        volunteerSocket.send(JSON.stringify({ type: 'offer', offer: volunteerPeer.localDescription }));
+        const link = volunteerUrl(room);
+        statusEl.innerHTML = `Share this volunteer link: <a href="${link}" target="_blank" rel="noopener">${link}</a>`;
+        speak('Volunteer call ready. Share the displayed link with your helper.', true);
+        sendVolunteerInvite(link);
+      };
+      volunteerSocket.onmessage = async ({ data }) => {
+        const message = JSON.parse(data);
+        if (message.type === 'answer') {
+          await volunteerPeer.setRemoteDescription(message.answer);
+          for (const candidate of volunteerPendingCandidates.splice(0)) await volunteerPeer.addIceCandidate(candidate);
+        }
+        if (message.type === 'candidate') {
+          if (!volunteerPeer.remoteDescription) volunteerPendingCandidates.push(message.candidate);
+          else await volunteerPeer.addIceCandidate(message.candidate);
+        }
+      };
+      volunteerSocket.onerror = () => { statusEl.textContent = 'Unable to start the volunteer call.'; };
+    }
+    callVolunteerBtn.addEventListener('click', startVolunteerCall);
+
+    // Sends the one-time call-room URL and the caller's best available location.
+    async function sendVolunteerInvite(callLink) {
+      const volunteerTemplateId = EMAILJS_CONFIG.volunteerTemplateId;
+      if (!EMAILJS_PUBLIC_KEY || !EMAILJS_SERVICE_ID || !volunteerTemplateId || !EMERGENCY_CONTACT_EMAIL) return;
+      let location = 'Location unavailable — the caller did not grant location permission.';
+      try {
+        const { lat, lng } = await requestBrowserLocation();
+        const data = await resolveLocation(lat, lng);
+        location = `${data.address} (coordinates: ${lat.toFixed(6)}, ${lng.toFixed(6)})`;
+        lastKnownLocation = { address: data.address, lat, lng };
+      } catch (error) {
+        if (lastKnownLocation) location = `${lastKnownLocation.address} (coordinates: ${lastKnownLocation.lat.toFixed(6)}, ${lastKnownLocation.lng.toFixed(6)})`;
+      }
+      emailjs.send(EMAILJS_SERVICE_ID, volunteerTemplateId, {
+        message: 'A VisionGuide volunteer video call is ready. Use the button below to view the caller’s live camera.',
+        location,
+        volunteer_link: callLink,
+        to_email: EMERGENCY_CONTACT_EMAIL,
+      }).then(() => {
+        addLogEntry({ type: 'voice', title: 'Volunteer link emailed', text: `A secure call link was sent to ${EMERGENCY_CONTACT_EMAIL}.` });
+      }).catch((err) => {
+        console.error('Volunteer invite email failed:', err);
+        addLogEntry({ type: 'alert', title: 'Volunteer link email failed', text: err.text || 'EmailJS could not send the invitation.' });
+      });
     }
 
     // ---------- Auth Headers Helper ----------
@@ -1388,6 +1491,8 @@
         });
         if (!res.ok) throw new Error(`Server error: ${res.status}`);
         const data = await res.json();
+
+        if (data.start_volunteer_call) startVolunteerCall();
 
         statusEl.textContent = data.spoken_text;
         speak(data.spoken_text, true);
@@ -1646,12 +1751,12 @@
     });
 
     // ---------- Emergency / Fall Detection ----------
-    const EMAILJS_PUBLIC_KEY = 'KAcET1ZdXmfFjR7Gt';
-    const EMAILJS_SERVICE_ID = 'YOUR_SERVICE_ID';
-    const EMAILJS_TEMPLATE_ID = 'template_qonwh6b';
-    const EMERGENCY_CONTACT_EMAIL = 'mr.vedantvas@gmail.com';
-
-    emailjs.init(EMAILJS_PUBLIC_KEY);
+    const EMAILJS_CONFIG = window.VISIONGUIDE_CONFIG?.emailjs || {};
+    const EMAILJS_PUBLIC_KEY = EMAILJS_CONFIG.publicKey || '';
+    const EMAILJS_SERVICE_ID = EMAILJS_CONFIG.serviceId || '';
+    const EMAILJS_TEMPLATE_ID = EMAILJS_CONFIG.templateId || '';
+    const EMERGENCY_CONTACT_EMAIL = EMAILJS_CONFIG.emergencyContactEmail || '';
+    if (EMAILJS_PUBLIC_KEY) emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
 
     const FALL_ACCEL_THRESHOLD = 25;
     let fallCooldown = false;
@@ -1728,6 +1833,10 @@
     }
 
     function sendEmergencyEmail(location) {
+      if (!EMAILJS_PUBLIC_KEY || !EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMERGENCY_CONTACT_EMAIL) {
+        statusEl.textContent = 'Emergency email is not configured. See config.example.js.';
+        return;
+      }
       emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
         message: 'A possible fall was detected and no response was received.',
         location: location,
@@ -1740,6 +1849,7 @@
         statusEl.textContent = 'Failed to send alert: ' + err.text;
       });
     }
+    testEmergencyBtn.addEventListener('click', () => sendEmergencyEmail('Manual test — location lookup skipped'));
     // ---------- Known Faces UI ----------
     const knownFacesList = document.getElementById('knownFacesList');
     const knownFacesEmpty = document.getElementById('knownFacesEmpty');
